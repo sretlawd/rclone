@@ -92,6 +92,14 @@ var services = []*service{
 		},
 		SCPD: connectionManagerServiceDescription,
 	},
+	{
+		Service: upnp.Service{
+			ServiceType: "urn:microsoft.com:service:X_MS_MediaReceiverRegistrar:1",
+			ServiceId:   "urn:microsoft.com:serviceId:X_MS_MediaReceiverRegistrar",
+			ControlURL:  serviceControlURL,
+		},
+		SCPD: mediaReceiverRegistrarServiceDescription,
+	},
 }
 
 func init() {
@@ -157,7 +165,15 @@ func newServer(f fs.Fs, opt *dlnaflags.Options) *server {
 		vfs: vfs.New(f, &vfsflags.Opt),
 	}
 
-	s.initServicesMap()
+	s.services = map[string]UPnPService{
+		"ContentDirectory": &contentDirectoryService{
+			server: s,
+		},
+		"ConnectionManager": &connectionManagerService{
+			server: s,
+		},
+	}
+
 	s.listInterfaces()
 
 	s.httpServeMux = http.NewServeMux()
@@ -171,6 +187,15 @@ func newServer(f fs.Fs, opt *dlnaflags.Options) *server {
 				Manufacturer: "rclone (rclone.org)",
 				ModelName:    rootDeviceModelName,
 				UDN:          s.rootDeviceUUID,
+				IconList: []upnp.Icon{
+					upnp.Icon{
+						Height:   120,
+						Width:    120,
+						Depth:    8,
+						Mimetype: "image/png",
+						URL:      "/icons/rclone.png",
+					},
+				},
 				ServiceList: func() (ss []upnp.Service) {
 					for _, s := range services {
 						ss = append(ss, s.Service)
@@ -184,7 +209,36 @@ func newServer(f fs.Fs, opt *dlnaflags.Options) *server {
 		// Contents are hardcoded, so this will never happen in production.
 		log.Panicf("Marshal root descriptor XML: %v", err)
 	}
-	s.rootDescXML = append([]byte(`<?xml version="1.0"?>`), s.rootDescXML...)
+
+	// Make some tweaks to the root descriptor XML.  None of this should be
+	// necessary by spec, but am trying to get things working on more devices
+	// which are poorly implemented.  These changes should really be made in
+	// the upstream project.
+	pos1 := bytes.Index(s.rootDescXML, []byte("<modelName>"))
+	pos2 := bytes.Index(s.rootDescXML, []byte("<UDN>"))
+	pos3 := bytes.Index(s.rootDescXML, []byte("<iconList>"))
+	xml := append([]byte(`<?xml version="1.0"?>`), s.rootDescXML[0:pos1]...)
+	xml = append(xml, bytes.TrimSpace([]byte(`
+		<manufacturerURL>http://rclong.org/</manufacturerURL>
+		<modelDescription>rclone</modelDescription>
+	`))...)
+	xml = append(xml, s.rootDescXML[pos1:pos2]...)
+	xml = append(xml, bytes.TrimSpace([]byte(`
+		<modelNumber>0.0.1</modelNumber>
+		<modelURL>http://rclone.org/</modelURL>
+		<serialNumber>00000000</serialNumber>
+	`))...)
+	xml = append(xml, s.rootDescXML[pos2:pos3]...)
+	// note: presentationURL should maybe be at the very end, looking at the schema?
+	xml = append(xml, bytes.TrimSpace([]byte(`
+		<sec:ProductCap>smi,DCM10,getMediaInfo.sec,getCaptionInfo.sec</sec:ProductCap>
+		<sec:X_ProductCap>smi,DCM10,getMediaInfo.sec,getCaptionInfo.sec</sec:X_ProductCap>
+		<dlna:X_DLNADOC xmlns:dlna="urn:schemas-dlna-org:device-1-0">DMS-1.50</dlna:X_DLNADOC>
+		<presentationURL>/</presentationURL>
+	`))...)
+	xml = append(xml, s.rootDescXML[pos3:]...)
+	s.rootDescXML = xml
+
 	s.initMux(s.httpServeMux)
 
 	return s
@@ -195,21 +249,6 @@ type UPnPService interface {
 	Handle(action string, argsXML []byte, r *http.Request) (respArgs map[string]string, err error)
 	Subscribe(callback []*url.URL, timeoutSeconds int) (sid string, actualTimeout int, err error)
 	Unsubscribe(sid string) error
-}
-
-// initServicesMap is called during initialization of the server to prepare some internal datastructures.
-func (s *server) initServicesMap() {
-	urn, err := upnp.ParseServiceType(services[0].ServiceType)
-	if err != nil {
-		// The service type is hardcoded, so this error should never happen.
-		log.Panicf("ParseServiceType: %v", err)
-	}
-	s.services = map[string]UPnPService{
-		urn.Type: &contentDirectoryService{
-			server: s,
-		},
-	}
-	return
 }
 
 // listInterfaces is called during initialization of the server to list the network interfaces
@@ -261,6 +300,11 @@ func (s *server) initMux(mux *http.ServeMux) {
 		if err != nil {
 			fs.Errorf(s, "Failed to serve root descriptor XML: %v", err)
 		}
+	})
+
+	// serve the embedded icon
+	mux.HandleFunc("/icons/rclone.png", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "rclone.png", time.Time{}, bytes.NewReader(icon_rclone_120x120_png))
 	})
 
 	// Install handlers to serve SCPD for each UPnP service.
