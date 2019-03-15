@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/anacrolix/dms/dlna"
+	"github.com/anacrolix/dms/dlna/dms"
 	"github.com/anacrolix/dms/upnp"
 	"github.com/anacrolix/dms/upnpav"
 	"github.com/ncw/rclone/vfs"
@@ -47,8 +48,12 @@ func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fi
 		return
 	}
 
-	// Hardcode "videoItem" so that files show up in VLC.
-	obj.Class = "object.item.videoItem"
+	mimeType, err := dms.MimeTypeByPath(fileInfo.Name())
+	if err != nil || !mimeType.IsMedia() {
+		return
+	}
+
+	obj.Class = "object.item." + mimeType.Type() + "Item"
 	obj.Title = fileInfo.Name()
 
 	item := upnpav.Item{
@@ -65,8 +70,7 @@ func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fi
 				"path": {cdsObject.Path},
 			}.Encode(),
 		}).String(),
-		// Hardcode "video/x-matroska" so that files show up in VLC.
-		ProtocolInfo: fmt.Sprintf("http-get:*:video/x-matroska:%s", dlna.ContentFeatures{
+		ProtocolInfo: fmt.Sprintf("http-get:*:%s:%s;DLNA.ORG_FLAGS=01700000000000000000000000000000", mimeType, dlna.ContentFeatures{
 			SupportRange: true,
 		}.String()),
 		Bitrate:    0,
