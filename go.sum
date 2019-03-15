@@ -25,6 +25,8 @@ github.com/abbot/go-http-auth v0.4.0 h1:QjmvZ5gSC7jm3Zg54DqWE/T5m1t2AfDu6QlXJT0E
 github.com/abbot/go-http-auth v0.4.0/go.mod h1:Cz6ARTIzApMJDzh5bRMSUou6UMSp0IEXg9km/ci7TJM=
 github.com/anacrolix/dms v0.0.0-20180117034613-8af4925bffb5 h1:lmyFvZXNGOmsKCYXNwzDLWafnxeewxsFwdsvTvSC1sg=
 github.com/anacrolix/dms v0.0.0-20180117034613-8af4925bffb5/go.mod h1:DGqLjaZ3ziKKNRt+U5Q9PLWJ52Q/4rxfaaH/b3QYKaE=
+github.com/anacrolix/ffprobe v0.0.0-20190307025918-9b483c5f7751 h1:Qg8h8gDUoIyQSdBfEZH6o5vnoggPw0GE6lJZDdD+XUw=
+github.com/anacrolix/ffprobe v0.0.0-20190307025918-9b483c5f7751/go.mod h1:cTB3tGuZEwdQ2pKco9h+dwOZEgks9SXGWiWwYH76aHs=
 github.com/anmitsu/go-shlex v0.0.0-20161002113705-648efa622239/go.mod h1:2FmKhYUyUczH0OGQWaF5ceTx0UBShxjsH6f8oGKYe2c=
 github.com/aws/aws-sdk-go v1.16.31 h1:bE4FW2uulhXiAaF4Guw0OzX9gBZ4iWvXWe6VT8Jxr28=
 github.com/aws/aws-sdk-go v1.16.31/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=

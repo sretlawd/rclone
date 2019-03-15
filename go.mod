@@ -10,6 +10,7 @@ require (
 	github.com/a8m/tree v0.0.0-20181222104329-6a0b80129de4
 	github.com/abbot/go-http-auth v0.4.0
 	github.com/anacrolix/dms v0.0.0-20180117034613-8af4925bffb5
+	github.com/anacrolix/ffprobe v0.0.0-20190307025918-9b483c5f7751 // indirect
 	github.com/aws/aws-sdk-go v1.16.31
 	github.com/billziss-gh/cgofuse v1.1.0
 	github.com/coreos/bbolt v1.3.2
