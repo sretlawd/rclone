@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -214,29 +215,30 @@ func newServer(f fs.Fs, opt *dlnaflags.Options) *server {
 	// necessary by spec, but am trying to get things working on more devices
 	// which are poorly implemented.  These changes should really be made in
 	// the upstream project.
-	pos1 := bytes.Index(s.rootDescXML, []byte("<modelName>"))
-	pos2 := bytes.Index(s.rootDescXML, []byte("<UDN>"))
-	pos3 := bytes.Index(s.rootDescXML, []byte("<iconList>"))
-	xml := append([]byte(`<?xml version="1.0"?>`), s.rootDescXML[0:pos1]...)
-	xml = append(xml, bytes.TrimSpace([]byte(`
-		<manufacturerURL>http://rclong.org/</manufacturerURL>
+	xml := s.rootDescXML
+	xml = regexp.MustCompile("<root xmlns=[^>]+").ReplaceAll(xml, []byte(`
+		<?xml version="1.0"?>
+		$0
+		xmlns:dlna="urn:schemas-dlna-org:device-1-0"
+		xmlns:sec="http://www.sec.co.kr/dlna"`),
+	)
+	xml = regexp.MustCompile("<modelName>.+</modelName>").ReplaceAll(xml, []byte(`
+		<manufacturerURL>https://rclone.org/</manufacturerURL>
 		<modelDescription>rclone</modelDescription>
-	`))...)
-	xml = append(xml, s.rootDescXML[pos1:pos2]...)
-	xml = append(xml, bytes.TrimSpace([]byte(`
+		$0
 		<modelNumber>0.0.1</modelNumber>
-		<modelURL>http://rclone.org/</modelURL>
+		<modelURL>https://rclone.org/</modelURL>
 		<serialNumber>00000000</serialNumber>
-	`))...)
-	xml = append(xml, s.rootDescXML[pos2:pos3]...)
-	// note: presentationURL should maybe be at the very end, looking at the schema?
-	xml = append(xml, bytes.TrimSpace([]byte(`
+	`))
+	xml = regexp.MustCompile("<iconList>").ReplaceAll(xml, []byte(`
+		<dlna:X_DLNACAP/>
+		<dlna:X_DLNADOC>DMS-1.50</dlna:X_DLNADOC>
+		<dlna:X_DLNADOC>M-DMS-1.50</dlna:X_DLNADOC>
 		<sec:ProductCap>smi,DCM10,getMediaInfo.sec,getCaptionInfo.sec</sec:ProductCap>
 		<sec:X_ProductCap>smi,DCM10,getMediaInfo.sec,getCaptionInfo.sec</sec:X_ProductCap>
-		<dlna:X_DLNADOC xmlns:dlna="urn:schemas-dlna-org:device-1-0">DMS-1.50</dlna:X_DLNADOC>
 		<presentationURL>/</presentationURL>
-	`))...)
-	xml = append(xml, s.rootDescXML[pos3:]...)
+		$0
+	`))
 	s.rootDescXML = xml
 
 	s.initMux(s.httpServeMux)
