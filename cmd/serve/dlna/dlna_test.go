@@ -201,3 +201,43 @@ func TestContentDirectoryBrowseDirectChildren(t *testing.T) {
 	require.Contains(t, string(body), "/r/subdir/video.mp4")
 	require.Contains(t, string(body), "/r/subdir/video.srt")
 }
+
+// Check that ContentDirectory#Browse returns appropriate metadata on the root container.
+func TestContentDirectoryBrowseMetadataVideo(t *testing.T) {
+	fs.Config.LogLevel = fs.LogLevelDebug
+	req, err := http.NewRequest("POST", baseURL+serviceControlURL, strings.NewReader(`
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+            s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+    <s:Body>
+        <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+            <ObjectID>%2Fvideo.mp4</ObjectID>
+            <BrowseFlag>BrowseMetadata</BrowseFlag>
+            <Filter>*</Filter>
+            <StartingIndex>0</StartingIndex>
+            <RequestedCount>0</RequestedCount>
+            <SortCriteria></SortCriteria>
+        </u:Browse>
+    </s:Body>
+</s:Envelope>`))
+	require.NoError(t, err)
+	req.Header.Set("SOAPACTION", `"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"`)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := ioutil.ReadAll(resp.Body)
+	require.NoError(t, err)
+	print(string(body))
+	assert.Contains(t, string(body), "video.en.srt")
+}
+
+func TestExternalSubtitlesSamsung(t *testing.T) {
+	req, err := http.NewRequest("HEAD", baseURL+resPath+"video.mp4", nil)
+	require.NoError(t, err)
+	req.Header.Set("getCaptionInfo.sec", "1")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer fs.CheckClose(resp.Body, &err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEmpty(t, resp.Header.Get("CaptionInfo.sec"))
+}

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	dms_dlna "github.com/anacrolix/dms/dlna"
 	"github.com/anacrolix/dms/soap"
 	"github.com/anacrolix/dms/ssdp"
 	"github.com/anacrolix/dms/upnp"
@@ -223,6 +222,12 @@ func (s *server) soapActionResponse(sa upnp.SoapAction, actionRequestXML []byte,
 	return service.Handle(sa.Action, actionRequestXML, r)
 }
 
+// Returns the path of the single subtitle for the given path or URL
+func subtitleFor(pathOrURL string) string {
+	path, _ := splitExt(pathOrURL)
+	return path + ".srt"
+}
+
 // Serves actual resources (media files).
 func (s *server) resourceHandler(w http.ResponseWriter, r *http.Request) {
 	remotePath := r.URL.Path
@@ -232,15 +237,26 @@ func (s *server) resourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("EXT", "")
 	w.Header().Set("Content-Length", strconv.FormatInt(node.Size(), 10))
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	// add some DLNA specific headers
 	if r.Header.Get("getContentFeatures.dlna.org") != "" {
-		w.Header().Set("contentFeatures.dlna.org", dms_dlna.ContentFeatures{
+		w.Header().Set("contentFeatures.dlna.org", ContentFeatures{
 			SupportRange: true,
 		}.String())
 	}
 	w.Header().Set("transferMode.dlna.org", "Streaming")
+
+	// older Samsung devices will retrieve a single subtitle URL via an extension header
+	if r.Header.Get("getCaptionInfo.sec") != "" {
+		_, err := s.vfs.Stat(subtitleFor(remotePath))
+		if err == nil {
+			subtitleURL := fmt.Sprintf("http://%s%s", r.Host, subtitleFor(r.URL.String()))
+			w.Header().Set("CaptionInfo.sec", subtitleURL)
+		}
+	}
 
 	file := node.(*vfs.File)
 	in, err := file.Open(os.O_RDONLY)

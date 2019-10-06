@@ -14,10 +14,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/anacrolix/dms/dlna"
 	"github.com/anacrolix/dms/upnp"
-	"github.com/anacrolix/dms/upnpav"
 	"github.com/pkg/errors"
+	"github.com/rclone/rclone/cmd/serve/dlna/upnpav"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/vfs"
 )
@@ -56,6 +55,38 @@ func init() {
 	}
 }
 
+// ContentFeatures describes various extended attributes provided by a content directory object.
+type ContentFeatures struct {
+	ProfileName     string
+	SupportTimeSeek bool
+	SupportRange    bool
+	// Play speeds, DLNA.ORG_PS would go here if supported.
+	Transcoded bool
+}
+
+func binaryInt(b bool) uint {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// flags are in hex. trailing 24 zeroes, 26 are after the space
+// "DLNA.ORG_OP=" time-seek-range-supp bytes-range-header-supp
+func (cf ContentFeatures) String() (ret string) {
+	//DLNA.ORG_PN=[a-zA-Z0-9_]*
+	params := make([]string, 0, 2)
+	if cf.ProfileName != "" {
+		params = append(params, "DLNA.ORG_PN="+cf.ProfileName)
+	}
+	params = append(params, fmt.Sprintf(
+		"DLNA.ORG_OP=%b%b;DLNA.ORG_CI=%b;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+		binaryInt(cf.SupportTimeSeek),
+		binaryInt(cf.SupportRange),
+		binaryInt(cf.Transcoded)))
+	return strings.Join(params, ";")
+}
+
 type contentDirectoryService struct {
 	*server
 	upnp.Eventing
@@ -65,11 +96,11 @@ func (cds *contentDirectoryService) updateIDString() string {
 	return fmt.Sprintf("%d", uint32(os.Getpid()))
 }
 
-var mediaMimeTypeRegexp = regexp.MustCompile("^(video|audio|image)/")
+var mediaMimeTypeRegexp = regexp.MustCompile("^(?:x-)?(video|audio|image)/")
 
 // Turns the given entry and DMS host into a UPnP object. A nil object is
 // returned if the entry is not of interest.
-func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fileInfo vfs.Node, resources vfs.Nodes, host string) (ret interface{}, err error) {
+func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fileInfo vfs.Node, resources vfs.Nodes, allowReadParent bool, host string) (ret interface{}, err error) {
 	obj := upnpav.Object{
 		ID:         cdsObject.ID(),
 		Restricted: 1,
@@ -88,6 +119,40 @@ func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fi
 			Object:     obj,
 			ChildCount: len(children),
 		}, nil
+	}
+
+	// HACK: if the additional resources were not passed in - e.g., by readContainer() - we'll just
+	//       call readContainer() and find the appropriate item in the results.  This way, the output
+	//       will always be consistent.
+	if allowReadParent {
+		fs.Debugf(cds, "reading parent to find metadata: %s", cdsObject.Path)
+
+		basePath, _ := path.Split(cdsObject.Path)
+		siblings, err := cds.readContainer(object{Path: basePath}, host)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, sibling := range siblings {
+			item, ok := sibling.(upnpav.Item)
+			if !ok {
+				continue
+			}
+
+			u, err := url.Parse(item.Res[0].URL)
+			if err != nil {
+				continue
+			}
+
+			fs.Debugf(cds, "evaluating %s", strings.TrimPrefix(u.Path, resPath))
+
+			if "/"+strings.TrimPrefix(u.Path, resPath) == cdsObject.Path {
+				fs.Debugf(cds, "found item in path: %v", item)
+				return item, nil
+			}
+		}
+
+		fs.Debugf(cds, "odd, item not found in parent")
 	}
 
 	if !fileInfo.Mode().IsRegular() {
@@ -110,6 +175,7 @@ func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fi
 
 	obj.Class = "object.item." + mediaType[1] + "Item"
 	obj.Title = fileInfo.Name()
+	obj.Date = upnpav.Timestamp{Time: fileInfo.ModTime()}
 
 	item := upnpav.Item{
 		Object: obj,
@@ -122,7 +188,7 @@ func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fi
 			Host:   host,
 			Path:   path.Join(resPath, cdsObject.Path),
 		}).String(),
-		ProtocolInfo: fmt.Sprintf("http-get:*:%s:%s", mimeType, dlna.ContentFeatures{
+		ProtocolInfo: fmt.Sprintf("http-get:*:%s:%s", mimeType, ContentFeatures{
 			SupportRange: true,
 		}.String()),
 		Size: uint64(fileInfo.Size()),
@@ -138,6 +204,7 @@ func (cds *contentDirectoryService) cdsObjectToUpnpavObject(cdsObject object, fi
 			URL:          subtitleURL,
 			ProtocolInfo: fmt.Sprintf("http-get:*:%s:*", "text/srt"),
 		})
+		item.InnerXML = fmt.Sprintf(`<sec:CaptionInfoEx sec:type="srt">%s</sec:CaptionInfoEx>`, subtitleURL)
 	}
 
 	ret = item
@@ -168,7 +235,7 @@ func (cds *contentDirectoryService) readContainer(o object, host string) (ret []
 		child := object{
 			path.Join(o.Path, de.Name()),
 		}
-		obj, err := cds.cdsObjectToUpnpavObject(child, de, mediaResources[de], host)
+		obj, err := cds.cdsObjectToUpnpavObject(child, de, mediaResources[de], false, host)
 		if err != nil {
 			fs.Errorf(cds, "error with %s: %s", child.FilePath(), err)
 			continue
@@ -308,8 +375,7 @@ func (cds *contentDirectoryService) Handle(action string, argsXML []byte, r *htt
 			if err != nil {
 				return nil, err
 			}
-			// TODO: External subtitles won't appear in the metadata here, but probably should.
-			upnpObject, err := cds.cdsObjectToUpnpavObject(obj, node, vfs.Nodes{}, host)
+			upnpObject, err := cds.cdsObjectToUpnpavObject(obj, node, vfs.Nodes{}, true, host)
 			if err != nil {
 				return nil, err
 			}
